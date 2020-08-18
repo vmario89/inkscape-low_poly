@@ -2,7 +2,9 @@
 
 import inkex
 import base64
+import os
 from io import StringIO, BytesIO
+import urllib.request as urllib
 from PIL import Image
 from lxml import etree
 import math
@@ -365,28 +367,63 @@ class LowPoly(inkex.Effect):
         style = {'opacity':1,'fill':rgb_hex,'fill-opacity':1,'fill-rule':'evenodd','stroke':'#64667a','stroke-width':0,'stroke-linecap':'round','stroke-linejoin':'miter','stroke-miterlimit':4,'stroke-dasharray':'none','stroke-opacity':1}
         path_element.set('style', str(inkex.Style(style)))
 
+    def checkImagePath(self, node):
+        """Embed the data of the selected Image Tag element"""
+        xlink = node.get('xlink:href')
+        if xlink and xlink[:5] == 'data:':
+            # No need, data alread embedded
+            return
+
+        url = urllib.urlparse(xlink)
+        href = urllib.url2pathname(url.path)
+
+        # Primary location always the filename itself.
+        path = self.absolute_href(href or '')
+
+        # Backup directory where we can find the image
+        if not os.path.isfile(path):
+            path = node.get('sodipodi:absref', path)
+
+        if not os.path.isfile(path):
+            inkex.errormsg('File not found "{}". Unable to embed image.').format(path)
+            return
+
+        if (os.path.isfile(path)):
+            return path
+
     def effect(self):
         svg = self.document.getroot()
         coords_list=self.get_list_of_coords_from_selected_circles()
+        if len(coords_list) < 3:
+            inkex.utils.debug("You need at least 3 circles or ellipsis to proceed!")
+            exit()
         image_element=svg.find('.//{http://www.w3.org/2000/svg}image')
-        image_string=image_element.get('{http://www.w3.org/1999/xlink}href')
-        #find comma position
-        i=0
-        while i<40:
-            if image_string[i]==',':
-                break
-            i=i+1
-        image = Image.open(BytesIO(base64.b64decode(image_string[i+1:len(image_string)])))
-        rgb_image=image.convert('RGB')
+        self.path = self.checkImagePath(image_element)  # This also ensures the file exists
+        if self.path is None:  # check if image is embedded or linked
+            image_string=image_element.get('{http://www.w3.org/1999/xlink}href')
+            # find comma position
+            i = 0
+            while i < 40:
+                if image_string[i] == ',':
+                    break
+                i = i + 1
+            image = Image.open(BytesIO(base64.b64decode(image_string[i + 1:len(image_string)])))
+        else:
+            image = Image.open(self.path)
 
         extrinsic_image_width=float(image_element.get('width'))
         extrinsic_image_height=float(image_element.get('height'))
-        anchor_x=float(image_element.get('x'))
-        anchor_y=float(image_element.get('y'))
+        if image_element.get('x') is not None:
+            anchor_x=float(image_element.get('x'))
+        else:
+            anchor_x = 0.0
+        if image_element.get('y') is not None:
+            anchor_y=float(image_element.get('y'))
+        else:
+            anchor_y = 0.0
         rgb_image=image.convert('RGB')
         anchor=(anchor_x,anchor_y)
         triangulation= bowyer_watson(coords_list)
-
         for pointy_triangle in triangulation:
             sided_triangle=((pointy_triangle[0],pointy_triangle[1]),(pointy_triangle[1],pointy_triangle[2]),(pointy_triangle[2],pointy_triangle[0]))
             try:
